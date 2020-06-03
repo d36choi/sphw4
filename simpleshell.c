@@ -50,24 +50,53 @@ redirMode checkRedirectionMode(char *argv_list)
     return mode;
 }
 
-size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input)
+size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char *output, char *err)
 {
     size_t n = 0;
     char * arg = strtok(buf, delimeter);
-
+    int dirMode = 0;
     while(arg != NULL)
     {
         if(strchr(arg,'&')!=NULL)
         {
-            continue;
+            // do nothing
         }
         else if(strchr(arg,'<')!=NULL)
         {
-            input = arg;
-            continue;
+            dirMode = 1;
         }
-        arg_list[n++] = arg;
-        
+        else if(strchr(arg,'>')!=NULL)
+        {
+            dirMode = 2;
+        }
+        else if(strstr(arg,"2>")!=NULL)
+        {
+            dirMode = 3;
+        }
+        else
+        {
+            if(dirMode)
+            {
+                if(dirMode==1)
+                {
+                    strcpy(input,arg);
+                }
+                else if(dirMode==2)
+                {
+                    strcpy(output,arg);
+                }
+                else
+                {
+                    strcpy(err,arg);
+                }
+                dirMode = 0;
+            }  
+            else
+            {               
+                arg_list[n++] = arg;   
+            }
+
+        }
         arg = strtok(NULL, delimeter);
     }
     arg_list[n] = NULL;
@@ -113,22 +142,23 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
         {
             input_fd = open(input,O_RDONLY);
             //indir
-            dup2(input_fd,STDIN_FILENO);
             close(STDIN_FILENO);
+            dup2(input_fd,STDIN_FILENO);
             close(input_fd);
         }
         if(mode.outdir)
         {
-            output_fd = open(output, O_CREAT|O_TRUNC|O_WRONLY, (int)384);
-            dup2(output_fd, STDOUT_FILENO);
+            output_fd = open(output, O_CREAT|O_TRUNC|O_WRONLY, 0600);
             close(STDOUT_FILENO);
+            dup2(output_fd, STDOUT_FILENO); 
             close(input_fd);
         }
         if(mode.errdir)
         {
-            err_fd = open(err, O_CREAT|O_TRUNC|O_WRONLY, (int)384);
-            dup2(err_fd,STDERR_FILENO);
+            // cat 2> 하면 cat text 가 errdir 로 복사되는 문제?
+            err_fd = open(err, O_CREAT|O_TRUNC|O_WRONLY, 0777);
             close(STDERR_FILENO);
+            dup2(err_fd,STDERR_FILENO);
             close(err_fd);
         }
         execvp(argv[0],argv);
@@ -143,39 +173,39 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     } 
 }
 
-void execPipes(int isbg,char ** pipe_list,int nCmd)
-{
-    int fd[2] = {0,0};
-    char **pip1;
-    char **pip2;
-    pip1 = (char **)malloc(sizeof(char *) * (1024));
-    pip2 = (char **)malloc(sizeof(char *) * (1024));
-    char *inputDir;
-    int i=0;
-    redirMode mode={0,0,0};
-    int in;
+// void execPipes(int isbg,char ** pipe_list,int nCmd)
+// {
+//     int fd[2] = {0,0};
+//     char **pip1;
+//     char **pip2;
+//     pip1 = (char **)malloc(sizeof(char *) * (1024));
+//     pip2 = (char **)malloc(sizeof(char *) * (1024));
+//     char *inputDir;
+//     int i=0;
+//     redirMode mode={0,0,0};
+//     int in;
     
-    for(i=0; i<nCmd-1; i+=2)
-    {
-        pipe(fd);
-        if(i==0)
-        {
-            if(checkIndir(pipe_list[i]))
-            {
-                parseIndir(pipe_list[i],pip1,DELIMETER,inputDir);
-                mode.indir = 1;
-                execute(isbg,pip1,mode,inputDir,NULL,NULL);
-            }
-            else
-            {
-                parse(pipe_list[i],pip1,DELIMETER);
-                parse(pipe_list[i+1],pip2,DELIMETER);
-            }
+//     for(i=0; i<nCmd-1; i+=2)
+//     {
+//         pipe(fd);
+//         if(i==0)
+//         {
+//             if(checkIndir(pipe_list[i]))
+//             {
+//                 parseIndir(pipe_list[i],pip1,DELIMETER,inputDir);
+//                 mode.indir = 1;
+//                 execute(isbg,pip1,mode,inputDir,NULL,NULL);
+//             }
+//             else
+//             {
+//                 parse(pipe_list[i],pip1,DELIMETER);
+//                 parse(pipe_list[i+1],pip2,DELIMETER);
+//             }
             
-        }
+//         }
 
-    }
-}
+//     }
+// }
 
 void showPrompt(){
     printf("$");
@@ -207,15 +237,21 @@ int main(int argc, char * argv[]){
     redirMode mode = {0,0,0};
     size_t nCmd = 1;
     size_t nPipe_cmd = 0;
+    int n=0;
+    char *input,*output,*err;
+    input = (char*)malloc(sizeof(char)*1024);
+    output = (char*)malloc(sizeof(char)*1024);
+    err = (char*)malloc(sizeof(char)*1024);
+
     if(argc>1) // 인자 주어지는 경우. 아직 미완성. 인자없는 경우 완성하고 진행할것.
     {
-        for(i=1; i< argc; i++)
-        {
-            argv_list[i-1] = argv[i];
-            // printf("%s ",argv_list[i-1]);
-        }
-        argv_list[argc] = "\0";
-        execute(isbg,argv_list);
+        // for(i=1; i< argc; i++)
+        // {
+        //     argv_list[i-1] = argv[i];
+        //     // printf("%s ",argv_list[i-1]);
+        // }
+        // argv_list[argc] = "\0";
+        // execute(isbg,argv_list);
     }    
 
     while(1)
@@ -250,23 +286,26 @@ int main(int argc, char * argv[]){
                 {
 
                 }
+                else
+                {
+                    // pipe with no redir?
+                }
+                
             }
             else // no pipe
             {
-                if(mode.indir || mode.outdir || mode.errdir)
-                {
-
-                }
-                else
-                {
-                    // normal exec
-                }
-                
+                // normal exec
+                n = parseIndir(cmd_list[i],pipe_list,DELIMETER,input,output,err);
+                execute(isbg,pipe_list,mode,input,output,err);              
             }
+
             /* 해야되는거: cmd_list 를 3차원의 argv_list 나 pipe_list 이용해서 파싱
                 해당 경우에 따라 execute 함수 만들기 with isbg...
                 작은거부터 차근차근해보자...
-                
+                0603 현재 ls, ls redir with bg 통과. 
+                문제들: bg 계속하면 프롬프트 버퍼 씹혀서 나옴
+                문제들: 2> 에서 부정확한 느낌
+   
             */
         }
         
