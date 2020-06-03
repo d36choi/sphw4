@@ -65,13 +65,14 @@ size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char
         {
             dirMode = 1;
         }
+        else if(strstr(arg,"2>")!=NULL) 
+        {   // strchr '>' 가 먼저오면 2> 에 대해서도 
+            // output redirection 으로 검색하기때문에 err term 먼저
+            dirMode = 3;
+        }
         else if(strchr(arg,'>')!=NULL)
         {
             dirMode = 2;
-        }
-        else if(strstr(arg,"2>")!=NULL)
-        {
-            dirMode = 3;
         }
         else
         {
@@ -102,6 +103,67 @@ size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char
     arg_list[n] = NULL;
 
   return n;
+}
+
+
+size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char *output, char *err)
+{
+    size_t n = 0;
+    char * arg = strtok(buf, delimeter);
+    int dirMode = 0;
+    int idx = 0; // idx 번째 pipe 의 cmd 를 의미.
+    while(arg != NULL)
+    {
+        if(strchr(arg,'&')!=NULL)
+        {
+            // do nothing
+        }
+        else if(strchr(arg,'|')!=NULL)
+        {
+            arg_list[idx++][n] = NULL; // 각 명령어 마지막 null 처리해줘야
+            n=0; // idx번째 명령어의 명령 or 옵션 n번째를 의미. 새로운 명령어이므로 초기화.
+        }
+        else if(strchr(arg,'<')!=NULL)
+        {
+            dirMode = 1;
+        }
+        else if(strchr(arg,'>')!=NULL)
+        {
+            dirMode = 2;
+        }
+        else if(strstr(arg,"2>")!=NULL)
+        {
+            dirMode = 3;
+        }
+        else
+        {
+            if(dirMode)
+            {
+                if(dirMode==1)
+                {
+                    strcpy(input,arg);
+                }
+                else if(dirMode==2)
+                {
+                    strcpy(output,arg);
+                }
+                else
+                {
+                    strcpy(err,arg);
+                }
+                dirMode = 0;
+            }  
+            else
+            {               
+                arg_list[idx][n++] = arg;   
+            }
+
+        }
+        arg = strtok(NULL, delimeter);
+    }
+    arg_list[idx][n] = NULL; // last cmd 의 마지막 처리해줌.
+    arg_list[idx+1] = NULL; // 다음꺼 null 처리해서 exception 방지?
+    return n;
 }
 
 size_t parse(char* buf, char ** arg_list,char * delimeter)
@@ -136,25 +198,33 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     // https://mhwan.tistory.com/42
     int status, pid;
     int input_fd,output_fd,err_fd;
+    int save_in = dup(STDIN_FILENO);
+    int save_out = dup(STDOUT_FILENO);
+    int save_err = dup(STDERR_FILENO);
+
 
     if((pid=fork())==0) {
-        if(mode.indir)
+        if(mode.indir && input!=NULL)
         {
+            
             input_fd = open(input,O_RDONLY);
             //indir
             close(STDIN_FILENO);
             dup2(input_fd,STDIN_FILENO);
             close(input_fd);
+            
         }
-        if(mode.outdir)
+        if(mode.outdir && output!=NULL)
         {
+            
             output_fd = open(output, O_CREAT|O_TRUNC|O_WRONLY, 0600);
             close(STDOUT_FILENO);
             dup2(output_fd, STDOUT_FILENO); 
-            close(input_fd);
+            close(output_fd);
         }
-        if(mode.errdir)
+        if(mode.errdir && err!=NULL)
         {
+            
             // cat 2> 하면 cat text 가 errdir 로 복사되는 문제?
             err_fd = open(err, O_CREAT|O_TRUNC|O_WRONLY, 0777);
             close(STDERR_FILENO);
@@ -166,24 +236,39 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
             perror(argv[0]);
             exit(1);
         }
+
+        // dup2(save_in,STDIN_FILENO);
+        // close(save_in);
+        // dup2(save_out,STDERR_FILENO);
+        // close(save_out);
+        // dup2(save_err,STDERR_FILENO);
+        // close(save_err);
         exit(0);
     }
     else if (pid != 0) {
+        
         if(isbg==0)
         {
             pid = wait(&status);
+            fflush(stdout);
+            // restore fd set...
+            dup2(save_in,STDIN_FILENO);
+            close(save_in);
+            dup2(save_out,STDERR_FILENO);
+            close(save_out);
+            dup2(save_err,STDERR_FILENO);
+            close(save_err);
+              
             return;
         }
-
         else 
         {
-            printf("[1] %d\n", getpid()); // proc [1],[2]는 stack num 의미하는 듯한데...
             waitpid(pid, &status, WNOHANG);    // 이게 맞나싶다. 계속 자식 프로세스 기다리는거같은데;
         }
     } 
 }
 
-// void execPipes(int isbg,char ** pipe_list,int nCmd)
+// void execPipes(int isbg,char ***argv_list,redirMode * mode)
 // {
 //     int fd[2] = {0,0};
 //     char **pip1;
@@ -195,21 +280,14 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
 //     redirMode mode={0,0,0};
 //     int in;
     
-//     for(i=0; i<nCmd-1; i+=2)
+//     while(argv_list[i]!=NULL)
 //     {
 //         pipe(fd);
 //         if(i==0)
 //         {
-//             if(checkIndir(pipe_list[i]))
+//             if(mode->indir)
 //             {
-//                 parseIndir(pipe_list[i],pip1,DELIMETER,inputDir);
-//                 mode.indir = 1;
-//                 execute(isbg,pip1,mode,inputDir,NULL,NULL);
-//             }
-//             else
-//             {
-//                 parse(pipe_list[i],pip1,DELIMETER);
-//                 parse(pipe_list[i+1],pip2,DELIMETER);
+//                 execute(isbg,argv_list[i],mode)
 //             }
             
 //         }
@@ -221,6 +299,12 @@ void showPrompt(){
     printf("$");
 }
 
+void flushParams(char *in,char *out, char *err)
+{
+    in = NULL;
+    out = NULL;
+    err = NULL;
+}
 
 
 int main(int argc, char * argv[]){
@@ -287,11 +371,14 @@ int main(int argc, char * argv[]){
         }
         for(i=0; i<nCmd; i++)
         {
+            flushParams(input,output,err);
             isbg = checkBackground(cmd_list[i]);
             isPipe = checkPipe(cmd_list[i]);
             mode = checkRedirectionMode(cmd_list[i]);
             if(isPipe)
             {
+                n = parsePipe(cmd_list[i],argv_list,DELIMETER,input,output,err);
+
                 // pipe
                 if(mode.indir || mode.outdir || mode.errdir)
                 {
