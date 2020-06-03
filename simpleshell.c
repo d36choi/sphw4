@@ -100,7 +100,7 @@ size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char
         }
         arg = strtok(NULL, delimeter);
     }
-    arg_list[n] = NULL;
+    arg_list[n] = (char*)0;
 
   return n;
 }
@@ -111,7 +111,7 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
     size_t n = 0;
     char * arg = strtok(buf, delimeter);
     int dirMode = 0;
-    int idx = 0; // idx 번째 pipe 의 cmd 를 의미.
+    size_t idx = 0; // idx 번째 pipe 의 cmd 를 의미.
     while(arg != NULL)
     {
         if(strchr(arg,'&')!=NULL)
@@ -120,7 +120,7 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
         }
         else if(strchr(arg,'|')!=NULL)
         {
-            arg_list[idx++][n] = NULL; // 각 명령어 마지막 null 처리해줘야
+            arg_list[idx++][n] = (char*)0; // 각 명령어 마지막 null 처리해줘야
             n=0; // idx번째 명령어의 명령 or 옵션 n번째를 의미. 새로운 명령어이므로 초기화.
         }
         else if(strchr(arg,'<')!=NULL)
@@ -154,16 +154,17 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
                 dirMode = 0;
             }  
             else
-            {               
+            {             
+                printf("arg: %s\n",arg_list[idx][n]);  
                 arg_list[idx][n++] = arg;   
             }
-
+            
         }
         arg = strtok(NULL, delimeter);
     }
-    arg_list[idx][n] = NULL; // last cmd 의 마지막 처리해줌.
-    arg_list[idx+1] = NULL; // 다음꺼 null 처리해서 exception 방지?
-    return n;
+    arg_list[idx][n] = (char*)0; // last cmd 의 마지막 처리해줌.
+    arg_list[idx+1] = (char**)0; // 다음꺼 null 처리해서 exception 방지?
+    return idx+1; // return command 갯수. idx 만 리턴하면 2개의 경우 1이 리턴되므로 +1 해줘야갯수가 된다
 }
 
 size_t parse(char* buf, char ** arg_list,char * delimeter)
@@ -194,7 +195,8 @@ size_t parse(char* buf, char ** arg_list,char * delimeter)
   return n;
 }
 
-void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, char *err){
+void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, char *err)
+{
     // https://mhwan.tistory.com/42
     int status, pid;
     int input_fd,output_fd,err_fd;
@@ -268,32 +270,83 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     } 
 }
 
-// void execPipes(int isbg,char ***argv_list,redirMode * mode)
-// {
-//     int fd[2] = {0,0};
-//     char **pip1;
-//     char **pip2;
-//     pip1 = (char **)malloc(sizeof(char *) * (1024));
-//     pip2 = (char **)malloc(sizeof(char *) * (1024));
-//     char *inputDir;
-//     int i=0;
-//     redirMode mode={0,0,0};
-//     int in;
-    
-//     while(argv_list[i]!=NULL)
-//     {
-//         pipe(fd);
-//         if(i==0)
-//         {
-//             if(mode->indir)
-//             {
-//                 execute(isbg,argv_list[i],mode)
-//             }
-            
-//         }
+void execPipes(int isbg,char ***argv_list,redirMode mode,int cmdCnt,char *input, char *output, char *err)
+{
+    int fd[2];
+    char *inputDir;
+    redirMode mode2 = {0,0,0};
+    int i=0;
+    int in;
+    int status;
+    int pid;
+    int input_fd = 0;
+    int pipes = cmdCnt - 1;
+    argv_list[cmdCnt] = (char**)0;
+    while (argv_list[i] != (char**)0)
+    {
+        mode2.indir = 0;
+        mode2.outdir = 0;
+        mode2.errdir = 0; 
+        pipe(fd);
+        if ((pid = fork()) == -1)
+        {
+            exit(1);
+        }
+        else if (pid == 0)
+        {
+            dup2(input_fd, 0);
+            if (i!=cmdCnt-1)
+            {
+                dup2(fd[1], 1);
+            }
+            close(fd[0]);
 
-//     }
-// }
+            if(i==0)
+            {
+                if(mode.indir)
+                {
+                    mode2.indir = 1;
+                    mode2.outdir = 0;
+                    mode2.errdir = 0;
+                    execute(isbg,argv_list[i],mode2,input,NULL,NULL);
+                }
+                else
+                {  
+                    execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+                }
+            }
+            else if(i==cmdCnt-1)
+            {
+                if(mode.outdir)
+                {
+                    mode2.outdir=1;
+                }
+                if(mode.errdir)
+                {
+                    mode2.errdir=1;
+                }
+                dup2(1,STDOUT_FILENO);
+                execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+            }
+            exit(0);
+        }
+        else
+        {
+            if(isbg) 
+            {
+                waitpid(pid, &status, WNOHANG);    // 이게 맞나싶다. 계속 자식 프로세스 기다리는거같은데;
+            }
+            else
+            {
+                pid = wait(&status);
+            }
+
+            close(fd[1]);
+            input_fd = fd[0];
+            i++;
+        }
+    }
+}
 
 void showPrompt(){
     printf("$");
@@ -310,11 +363,13 @@ void flushParams(char *in,char *out, char *err)
 int main(int argc, char * argv[]){
 
     char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
-    argv_list = (char ***)malloc(sizeof(char **) * (ARG_MAX));
+    argv_list = (char ***)malloc(sizeof(char **) * (30));
+    
+
     char ** cmd_list; // ; 단위로 구분한 명령어 집합
-    cmd_list = (char **)malloc(sizeof(char *) * (ARG_MAX));
+    cmd_list = (char **)malloc(sizeof(char *) * (1024));
     char ** pipe_list; // 파이프 단위로 쪼갠 명령어 집합 "cmd option","cmd option" , ...
-    pipe_list = (char **)malloc(sizeof(char *) * (ARG_MAX));
+    pipe_list = (char **)malloc(sizeof(char *) * (1024));
     
     
     char buf[1024]; // for fgets 
@@ -337,25 +392,29 @@ int main(int argc, char * argv[]){
     output = (char*)malloc(sizeof(char)*1024);
     err = (char*)malloc(sizeof(char)*1024);
 
-    if(argc>1) // 인자 주어지는 경우. 아직 미완성. 인자없는 경우 완성하고 진행할것.
+    for (i = 0; i < 30; i++)
     {
-        // for(i=1; i< argc; i++)
-        // {
-        //     argv_list[i-1] = argv[i];
-        //     // printf("%s ",argv_list[i-1]);
-        // }
-        // argv_list[argc] = "\0";
-        // execute(isbg,argv_list);
-    }    
+        argv_list[i] = (char**)malloc(sizeof(char*)*1024);
+        
+    }
 
     while(1)
     {
-        showPrompt();
-        fflush(stdin);
-        if(!fgets(buf,sizeof(buf),stdin)) // EOF 입력시 종료
+        if(argc>1) // 인자 주어지는 경우. 아직 미완성. 인자없는 경우 완성하고 진행할것.
         {
-            exit(0);
+           strcpy(buf,argv[2]);
+        }   
+        else
+        {
+            showPrompt();
+            fflush(stdin);
+            if(!fgets(buf,sizeof(buf),stdin)) // EOF 입력시 종료
+            {
+                exit(0);
+            }
         }
+        argc = 0;
+
         if(strcmp(buf,"\n")==0) // 개행 입력 경우 다시..
         {
             continue;
@@ -380,14 +439,7 @@ int main(int argc, char * argv[]){
                 n = parsePipe(cmd_list[i],argv_list,DELIMETER,input,output,err);
 
                 // pipe
-                if(mode.indir || mode.outdir || mode.errdir)
-                {
-
-                }
-                else
-                {
-                    // pipe with no redir?
-                }
+                execPipes(isbg,argv_list,mode,n,input,output,err);
                 
             }
             else // no pipe
