@@ -161,14 +161,24 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
             dup2(err_fd,STDERR_FILENO);
             close(err_fd);
         }
-        execvp(argv[0],argv);
+        if(execvp(argv[0],argv)<0)
+        {
+            perror(argv[0]);
+            exit(1);
+        }
+        exit(0);
     }
     else if (pid != 0) {
         if(isbg==0)
-             pid = wait(&status);
-        else {
-             printf("[1] %d\n", getpid()); // proc [1],[2]는 stack num 의미하는 듯한데...
-             waitpid(pid, &status, WNOHANG);    // 이게 맞나싶다. 계속 자식 프로세스 기다리는거같은데;
+        {
+            pid = wait(&status);
+            return;
+        }
+
+        else 
+        {
+            printf("[1] %d\n", getpid()); // proc [1],[2]는 stack num 의미하는 듯한데...
+            waitpid(pid, &status, WNOHANG);    // 이게 맞나싶다. 계속 자식 프로세스 기다리는거같은데;
         }
     } 
 }
@@ -257,7 +267,8 @@ int main(int argc, char * argv[]){
     while(1)
     {
         showPrompt();
-        if(!fgets(buf,sizeof(buf)-1,stdin)) // EOF 입력시 종료
+        fflush(stdin);
+        if(!fgets(buf,sizeof(buf),stdin)) // EOF 입력시 종료
         {
             exit(0);
         }
@@ -303,7 +314,6 @@ int main(int argc, char * argv[]){
                 해당 경우에 따라 execute 함수 만들기 with isbg...
                 작은거부터 차근차근해보자...
                 0603 현재 ls, ls redir with bg 통과. 
-                문제들: bg 계속하면 프롬프트 버퍼 씹혀서 나옴
                 문제들: 2> 에서 부정확한 느낌
    
             */
