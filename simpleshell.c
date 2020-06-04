@@ -34,6 +34,7 @@ int checkPipe(char *argv_list)
 
 redirMode checkRedirectionMode(char *argv_list)
 {
+    // redir 존재하는지 각각체크.
     redirMode mode = {0,0,0};
     if(strchr(argv_list,'<')!=NULL)
     {
@@ -52,6 +53,7 @@ redirMode checkRedirectionMode(char *argv_list)
 
 size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char *output, char *err)
 {
+    // 명령어에 대해 redirecion 파싱 및 2차원 arg_list 로 파싱해서 exec 쉽게.
     size_t n = 0;
     char * arg = strtok(buf, delimeter);
     int dirMode = 0;
@@ -108,6 +110,7 @@ size_t parseIndir(char* buf, char ** arg_list,char * delimeter,char *input, char
 
 size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char *output, char *err)
 {
+    // pipe 형식있는 경우의 파싱. 3차원 배열에 cmd 들 담는다.
     size_t n = 0;
     char * arg = strtok(buf, delimeter);
     int dirMode = 0;
@@ -139,6 +142,7 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
         {
             if(dirMode)
             {
+                // redirection filename 들 정해진대로 copy.
                 if(dirMode==1)
                 {
                     strcpy(input,arg);
@@ -162,33 +166,28 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
         arg = strtok(NULL, delimeter);
     }
     arg_list[idx][n] = (char*)0; // last cmd 의 마지막 처리해줌.
-    arg_list[idx+1] = (char**)0; // 다음꺼 null 처리해서 exception 방지?
-    return idx+1; // return command 갯수. idx 만 리턴하면 2개의 경우 1이 리턴되므로 +1 해줘야갯수가 된다
+    arg_list[idx+1] = (char**)0; // 다음꺼 null 처리해서 exception 방지
+    return idx+1; // return command 갯수. idx 만 리턴하면 2개의 경우 1이 리턴되므로 +1 해줘야 갯수가 된다.
 }
 
 size_t parse(char* buf, char ** arg_list,char * delimeter)
 {
+    // 주어진 delimeter 대로 string 을 파싱함.
     size_t n = 0;
     char * arg = strtok(buf, delimeter);
 
     while(arg != NULL)
     {
         if(strchr(arg,'&')!=NULL)
-        {
+        {   // & notation 은 무시. 저장할 필요 없음
             continue;
         }
-        // else if(strchr(arg,'<')!=NULL)
-        // {
-        //     mode->isInput = n;
-        // }
-        // else if(strchr(arg,'>')!=NULL)
-        // {
-        //     mode->isOutput = n;
-        // }
+        // 각각의 cmd 의 arg 별로 파싱해서 저장. exec 함수에 그대로 사용가능하도록.
         arg_list[n++] = arg;
         
         arg = strtok(NULL, delimeter);
     }
+    // 마지막 null 처리해줘야 exec 에 문제없음.
     arg_list[n] = NULL;
 
   return n;
@@ -202,12 +201,12 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     int save_in = dup(STDIN_FILENO);
     int save_out = dup(STDOUT_FILENO);
     int save_err = dup(STDERR_FILENO);
-    
+    // 나중에 fd 복구할때 필요한 0~2 번 fd 미리 저장
 
     if((pid=fork())==0) {
         if(mode.indir && input!=NULL)
         {
-            
+            // < filename 오픈. stdin 에 연결.
             input_fd = open(input,O_RDONLY);
             //indir
             close(STDIN_FILENO);
@@ -217,7 +216,7 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
         }
         if(mode.outdir && output!=NULL)
         {
-            
+            // > filename open. stdout 에 연결.
             output_fd = open(output, O_CREAT|O_TRUNC|O_WRONLY, 0600);
             close(STDOUT_FILENO);
             dup2(output_fd, STDOUT_FILENO); 
@@ -225,8 +224,6 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
         }
         if(mode.errdir && err!=NULL)
         {
-            
-            // cat 2> 하면 cat text 가 errdir 로 복사되는 문제?
             err_fd = open(err, O_CREAT|O_TRUNC|O_WRONLY, 0777);
             close(STDERR_FILENO);
             dup2(err_fd,STDERR_FILENO);
@@ -234,6 +231,7 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
         }
         if(execvp(argv[0],argv)<0)
         {
+            // exec err 경우 err message 출력
             perror(argv[0]);
             exit(1);
         }
@@ -271,126 +269,37 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
 
 void execPipes(int isbg,char * cmd,redirMode mode,char *input, char *output, char *err)
 {
-    char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
-    argv_list = (char ***)malloc(sizeof(char **) * (30));  
-    int i=0;
-    for (i = 0; i < 30; i++)
-    {
-        argv_list[i] = (char**)malloc(sizeof(char*)*1024);
-    }
-    int fd[2];
-    redirMode mode2 = {0,0,0};
-
-    int in;
-    int status;
-    int pid;
-    int input_fd = 0;
-    int cmdCnt = parsePipe(cmd,argv_list,DELIMETER,input,output,err);
-    int pipes = cmdCnt - 1;
-    
-    while (argv_list[i] != (char**)0)
-    {
-        mode2.indir = 0;
-        mode2.outdir = 0;
-        mode2.errdir = 0; 
-        pipe(fd);
-        if ((pid = fork()) == -1)
-        {
-            exit(1);
-        }
-        else if (pid == 0)
-        {
-            dup2(input_fd, 0);
-            if (i!=cmdCnt-1)
-            {
-                dup2(fd[1], 1);
-            }
-            close(fd[0]);
-
-            if(i==0)
-            {
-                if(mode.indir)
-                {
-                    mode2.indir = 1;
-                    mode2.outdir = 0;
-                    mode2.errdir = 0;
-                    execute(isbg,argv_list[i],mode2,input,NULL,NULL);
-                }
-                else
-                {  
-                    // execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
-                    execvp(*argv_list[i],argv_list[i]);
-                }
-            }
-            else if(i==cmdCnt-1)
-            {
-                if(mode.outdir)
-                {
-                    mode2.outdir=1;
-                }
-                if(mode.errdir)
-                {
-                    mode2.errdir=1;
-                }
-                // dup2(1,STDOUT_FILENO);
-                // execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
-                execvp(*argv_list[i],argv_list[i]);
-            }
-            else execvp(*argv_list[i],argv_list[i]);
-            exit(0);
-        }
-        else
-        {
-            if(isbg) 
-            {
-                waitpid(pid, &status, WNOHANG);    // 이게 맞나싶다. 계속 자식 프로세스 기다리는거같은데;
-            }
-            else
-            {
-                pid = wait(&status);
-            }
-            
-            close(fd[1]);
-            input_fd = fd[0];
-            i++;
-        }
-    }
-    for(i=0;i< 30; i++)
-    {
-        free(argv_list[i]);
-    }
-    free(argv_list);
-}
-void execPipes1(int isbg,char * cmd,redirMode mode,char *input, char *output, char *err)
-{
-    char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
-    argv_list = (char ***)malloc(sizeof(char **) * (30));  
+    // 명령어 길이만큼 동적할당해주면 stress test 에서도 문제 생길일 없을 것이라 생각함.
+    int maxLen = strlen(cmd);
+    char *** argv_list; // ""cmd","option","option"",""cmd","option","option"" 의 형식의 3차원 배열
+    argv_list = (char ***)malloc(sizeof(char **) * (maxLen));  
     int i=0;
     int j=0;
-    for (i = 0; i < 30; i++)
+    // 3차원배열의 2차원 배열을 동적할당 해주어야 string 형태 배열 저장해서 exec 가능
+    for (i = 0; i < maxLen; i++) 
     {
         argv_list[i] = (char**)malloc(sizeof(char*)*1024);
     }
     redirMode mode2 = {0,0,0};
-
     int idx=0;
     int status;
     int pid;
-    int input_fd = 0;
     int cmdCnt = parsePipe(cmd,argv_list,DELIMETER,input,output,err);
     int pipes = cmdCnt - 1;
+    // pipe 갯수만큼의 pipe 할당. 01, 23, 45 이런 순으로 read,write end 를 열고닫고 반복...
     int *pipefds;
     pipefds = (int*)malloc(sizeof(int)*(2*pipes));
     for(i=0;i<pipes;i++)
     {
         pipe(pipefds+i*2);
     }
-
+    // 명령어를 다 처리하기까지 계속 프로세스 생성후 exec 반복
     while (argv_list[idx] != (char**)0)
     {
         pid = fork();
+        // child proc
         if(pid==0)
-        {
+        {   // last cmd 가 아니면
             if(idx!=cmdCnt-1)
             {
                 if(dup2(pipefds[j+1],1) < 0)
@@ -399,6 +308,7 @@ void execPipes1(int isbg,char * cmd,redirMode mode,char *input, char *output, ch
                     exit(1);
                 }
             }
+            // first cmd 가 아니면
             if(j!=0)
             {
                 if(dup2(pipefds[j-2],0) < 0)
@@ -410,47 +320,58 @@ void execPipes1(int isbg,char * cmd,redirMode mode,char *input, char *output, ch
             for(i = 0; i < 2*pipes; i++){
                     close(pipefds[i]);
             }
-
+            // 0번쨰 cmd 에선 input redirection 체크해주어야
             if(mode.indir && idx==0)
             {
                 execute(isbg,argv_list[idx],mode,input,NULL,NULL);
             }
+            // last cmd 에선 output, err outpt 체크해줘야
             else if(idx==cmdCnt-1)
             {
                 mode2.outdir = mode.outdir;
                 mode2.errdir = mode.errdir;
                 execute(isbg,argv_list[idx],mode2,NULL,output,err);
             }
+            // 해당없으면 단순 exec 하면됨.
             else
             {
                 if(execvp(argv_list[idx][0],argv_list[idx])<0)
                 {
+                    // error 경우에는 err msg 출력.
                     perror(argv_list[idx][0]);
+                    // 비정상종료
                     exit(1);
                 }
             }
+            // 문제없으면 child proc exit
             exit(0);
         }
+        // 다음 cmd 진행. j번쨰 pipe fd 연결준비
         idx++;
         j+=2;
     }
+    // 다 끝나면 파이프 다 닫아줌. 01 23 45 ....
     for(i=0;i<2*pipes; i++)
     {
         close(pipefds[i]);
     }
-    if(isbg==0) // background check
+    // background check
+    if(isbg==0) 
     {
         for(i=0; i<pipes+1;i++)
         {
+            // parent block됨.
             wait(&status);
         }
     }
     else 
-        {
-            waitpid(pid, &status, WNOHANG);
-            // WNOHANG = block 안하고 리턴
-        }
-    for(i=0;i< 30; i++)
+    {
+        // WNOHANG = block 안하고 리턴
+        waitpid(pid, &status, WNOHANG);
+
+    }
+    // free 로 동적메모리할당 해제. 함수리턴하면 어차피 free 되긴할듯?
+    for(i=0;i< maxLen; i++)
     {
         free(argv_list[i]);
     }
@@ -464,9 +385,9 @@ void showPrompt(){
 
 void flushParams(char *in,char *out, char *err)
 {
-    in = NULL;
-    out = NULL;
-    err = NULL;
+    in = 0;
+    out = 0;
+    err = 0;
 }
 
 
@@ -479,22 +400,17 @@ int main(int argc, char * argv[]){
     char ** pipe_list; // 파이프 단위로 쪼갠 명령어 집합 "cmd option","cmd option" , ...
     pipe_list = (char **)malloc(sizeof(char *) * (1024));
     
-    
     char buf[1024]; // for fgets 
 
     // for redirection 기록
-    char ** inDir;
-    inDir = (char **)malloc(sizeof(char *) * (1024));
-
-    int isInDirPipe = 0;
-    
-    int i=1; int j=1;
+    int i=1;
     int isPipe = 0;
     int isbg = 0;
+    // 해당 명령어가 redirection 존재하는지 각각 체크하기위한 구조체
     redirMode mode = {0,0,0};
+    // 총 cmd 수. ls ; ls 면 2.
     size_t nCmd = 1;
-    size_t nPipe_cmd = 0;
-    int n=0;
+    // redirection 할 filename 들 저장
     char *input,*output,*err;
     input = (char*)malloc(sizeof(char)*1024);
     output = (char*)malloc(sizeof(char)*1024);
@@ -502,21 +418,22 @@ int main(int argc, char * argv[]){
 
     while(1)
     {
-        if(argc>1) // 인자 주어지는 경우. 아직 미완성. 인자없는 경우 완성하고 진행할것.
+        if(argc>1) 
         {
+            // 인자 주어지며 시작하는경우. argv[1] = "-c" 일테니 [2] 부터 들오는 명령어 "..." 를 buf 에 copy.
            strcpy(buf,argv[2]);
+           argc = 0; // 다음번 loop 부터는 showprompt 내용 진행되도록함.
         }   
         else
         {
             showPrompt();
+            // 혹시 모를 내용있을 수 있으니 buffer flush.
             fflush(stdin);
             if(!fgets(buf,sizeof(buf),stdin)) // EOF 입력시 종료
             {
                 exit(0);
             }
         }
-        argc = 0;
-
         if(strcmp(buf,"\n")==0) // 개행 입력 경우 다시..
         {
             continue;
@@ -527,12 +444,15 @@ int main(int argc, char * argv[]){
         }
         else // 명령 1개인 경우는 1을 NULL 로 해야
         {
+            nCmd = 1;
             cmd_list[0] = buf;
             cmd_list[1] = "\0";
         }
         for(i=0; i<nCmd; i++)
         {
+            // redir 초기화
             flushParams(input,output,err);
+            // &,|,<>2> 존재하는지 체크
             isbg = checkBackground(cmd_list[i]);
             isPipe = checkPipe(cmd_list[i]);
             mode = checkRedirectionMode(cmd_list[i]);
@@ -540,36 +460,18 @@ int main(int argc, char * argv[]){
             {
 
                 // pipe
-                execPipes1(isbg,cmd_list[i],mode,input,output,err);
+                execPipes(isbg,cmd_list[i],mode,input,output,err);
                 
             }
             else // no pipe
             {
-                // normal exec
-                n = parseIndir(cmd_list[i],pipe_list,DELIMETER,input,output,err);
+                // normal exec with redir or not
+                parseIndir(cmd_list[i],pipe_list,DELIMETER,input,output,err);
                 execute(isbg,pipe_list,mode,input,output,err);              
             }
-
-            /* 해야되는거: cmd_list 를 3차원의 argv_list 나 pipe_list 이용해서 파싱
-                해당 경우에 따라 execute 함수 만들기 with isbg...
-                작은거부터 차근차근해보자...
-                0603 현재 ls, ls redir with bg 통과. 
-                문제들: 2> 에서 부정확한 느낌
-   
-            */
         }
         
     }
     
     return 0;
 }
-
-/*  1. 인자 받았나 확인
-    2. ';' 체크해서 총 명령을 몇번하는지 확인
-    3. 각 명령 순서 별로 토큰화. &, <> , | 확인
-    4. 명령 별로 arg list 들 저장. file redirection 은 배열 따로 저장
-    4-2. file redirection 있는 경우 input args 에 대해 명령어 인지 머인지 확인...
-
-    5. 루프 반복
-    
-*/
