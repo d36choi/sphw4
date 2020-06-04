@@ -155,7 +155,6 @@ size_t parsePipe(char* buf, char *** arg_list,char * delimeter,char *input, char
             }  
             else
             {             
-                printf("arg: %s\n",arg_list[idx][n]);  
                 arg_list[idx][n++] = arg;   
             }
             
@@ -203,7 +202,7 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     int save_in = dup(STDIN_FILENO);
     int save_out = dup(STDOUT_FILENO);
     int save_err = dup(STDERR_FILENO);
-
+    
 
     if((pid=fork())==0) {
         if(mode.indir && input!=NULL)
@@ -239,12 +238,12 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
             exit(1);
         }
 
-        // dup2(save_in,STDIN_FILENO);
-        // close(save_in);
-        // dup2(save_out,STDERR_FILENO);
-        // close(save_out);
-        // dup2(save_err,STDERR_FILENO);
-        // close(save_err);
+        dup2(save_in,STDIN_FILENO);
+        close(save_in);
+        dup2(save_out,STDERR_FILENO);
+        close(save_out);
+        dup2(save_err,STDERR_FILENO);
+        close(save_err);
         exit(0);
     }
     else if (pid != 0) {
@@ -270,18 +269,25 @@ void execute(int isbg, char ** argv,redirMode mode,char *input,char *output, cha
     } 
 }
 
-void execPipes(int isbg,char ***argv_list,redirMode mode,int cmdCnt,char *input, char *output, char *err)
+void execPipes(int isbg,char * cmd,redirMode mode,char *input, char *output, char *err)
 {
-    int fd[2];
-    char *inputDir;
-    redirMode mode2 = {0,0,0};
+    char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
+    argv_list = (char ***)malloc(sizeof(char **) * (30));  
     int i=0;
+    for (i = 0; i < 30; i++)
+    {
+        argv_list[i] = (char**)malloc(sizeof(char*)*1024);
+    }
+    int fd[2];
+    redirMode mode2 = {0,0,0};
+
     int in;
     int status;
     int pid;
     int input_fd = 0;
+    int cmdCnt = parsePipe(cmd,argv_list,DELIMETER,input,output,err);
     int pipes = cmdCnt - 1;
-    argv_list[cmdCnt] = (char**)0;
+    
     while (argv_list[i] != (char**)0)
     {
         mode2.indir = 0;
@@ -312,7 +318,8 @@ void execPipes(int isbg,char ***argv_list,redirMode mode,int cmdCnt,char *input,
                 }
                 else
                 {  
-                    execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+                    // execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+                    execvp(*argv_list[i],argv_list[i]);
                 }
             }
             else if(i==cmdCnt-1)
@@ -325,9 +332,11 @@ void execPipes(int isbg,char ***argv_list,redirMode mode,int cmdCnt,char *input,
                 {
                     mode2.errdir=1;
                 }
-                dup2(1,STDOUT_FILENO);
-                execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+                // dup2(1,STDOUT_FILENO);
+                // execute(isbg,argv_list[i],mode2,NULL,NULL,NULL);
+                execvp(*argv_list[i],argv_list[i]);
             }
+            else execvp(*argv_list[i],argv_list[i]);
             exit(0);
         }
         else
@@ -340,12 +349,113 @@ void execPipes(int isbg,char ***argv_list,redirMode mode,int cmdCnt,char *input,
             {
                 pid = wait(&status);
             }
-
+            
             close(fd[1]);
             input_fd = fd[0];
             i++;
         }
     }
+    for(i=0;i< 30; i++)
+    {
+        free(argv_list[i]);
+    }
+    free(argv_list);
+}
+void execPipes1(int isbg,char * cmd,redirMode mode,char *input, char *output, char *err)
+{
+    char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
+    argv_list = (char ***)malloc(sizeof(char **) * (30));  
+    int i=0;
+    int j=0;
+    for (i = 0; i < 30; i++)
+    {
+        argv_list[i] = (char**)malloc(sizeof(char*)*1024);
+    }
+    redirMode mode2 = {0,0,0};
+
+    int idx=0;
+    int status;
+    int pid;
+    int input_fd = 0;
+    int cmdCnt = parsePipe(cmd,argv_list,DELIMETER,input,output,err);
+    int pipes = cmdCnt - 1;
+    int *pipefds;
+    pipefds = (int*)malloc(sizeof(int)*(2*pipes));
+    for(i=0;i<pipes;i++)
+    {
+        pipe(pipefds+i*2);
+    }
+
+    while (argv_list[idx] != (char**)0)
+    {
+        pid = fork();
+        if(pid==0)
+        {
+            if(idx!=cmdCnt-1)
+            {
+                if(dup2(pipefds[j+1],1) < 0)
+                {
+                    perror("dup2");
+                    exit(1);
+                }
+            }
+            if(j!=0)
+            {
+                if(dup2(pipefds[j-2],0) < 0)
+                {
+                    perror("dup2");
+                    exit(1);
+                }
+            }
+            for(i = 0; i < 2*pipes; i++){
+                    close(pipefds[i]);
+            }
+
+            if(mode.indir && idx==0)
+            {
+                execute(isbg,argv_list[idx],mode,input,NULL,NULL);
+            }
+            else if(idx==cmdCnt-1)
+            {
+                mode2.outdir = mode.outdir;
+                mode2.errdir = mode.errdir;
+                execute(isbg,argv_list[idx],mode2,NULL,output,err);
+            }
+            else
+            {
+                if(execvp(argv_list[idx][0],argv_list[idx])<0)
+                {
+                    perror(argv_list[idx][0]);
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
+        idx++;
+        j+=2;
+    }
+    for(i=0;i<2*pipes; i++)
+    {
+        close(pipefds[i]);
+    }
+    if(isbg==0) // background check
+    {
+        for(i=0; i<pipes+1;i++)
+        {
+            wait(&status);
+        }
+    }
+    else 
+        {
+            waitpid(pid, &status, WNOHANG);
+            // WNOHANG = block 안하고 리턴
+        }
+    for(i=0;i< 30; i++)
+    {
+        free(argv_list[i]);
+    }
+    free(argv_list);
+    return;
 }
 
 void showPrompt(){
@@ -362,8 +472,6 @@ void flushParams(char *in,char *out, char *err)
 
 int main(int argc, char * argv[]){
 
-    char *** argv_list; // ""cmd","option","option"",""cmd","option","option""
-    argv_list = (char ***)malloc(sizeof(char **) * (30));
     
 
     char ** cmd_list; // ; 단위로 구분한 명령어 집합
@@ -391,12 +499,6 @@ int main(int argc, char * argv[]){
     input = (char*)malloc(sizeof(char)*1024);
     output = (char*)malloc(sizeof(char)*1024);
     err = (char*)malloc(sizeof(char)*1024);
-
-    for (i = 0; i < 30; i++)
-    {
-        argv_list[i] = (char**)malloc(sizeof(char*)*1024);
-        
-    }
 
     while(1)
     {
@@ -436,10 +538,9 @@ int main(int argc, char * argv[]){
             mode = checkRedirectionMode(cmd_list[i]);
             if(isPipe)
             {
-                n = parsePipe(cmd_list[i],argv_list,DELIMETER,input,output,err);
 
                 // pipe
-                execPipes(isbg,argv_list,mode,n,input,output,err);
+                execPipes1(isbg,cmd_list[i],mode,input,output,err);
                 
             }
             else // no pipe
